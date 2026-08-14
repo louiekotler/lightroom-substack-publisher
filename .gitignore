@@ -1,0 +1,4 @@
+# Argument recording from the test stand-in.
+tests/.last-argv.json
+
+.DS_Store

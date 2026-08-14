@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""A stand-in for substack-post that fails the way the real one does.
+
+Used to check that the plug-in shows the tool's own explanation rather than an
+exit status, since that message is all the user will see.
+"""
+
+import sys
+
+print("error: Could not sign in to Substack: incorrect password.", file=sys.stderr)
+sys.exit(1)

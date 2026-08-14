@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""A stand-in for substack-post that talks to nobody.
+
+It implements the contract the plug-in relies on — kv output on stdout, the
+right keys for a draft, a publish and a --check — and records the argv it was
+handed, so the Lua side can be tested without a Substack account and without
+uploading anything.
+
+The recorded arguments go to $FAKE_SUBSTACK_ARGV, defaulting to
+tests/.last-argv.json beside this script's own directory.
+"""
+
+import json
+import os
+import sys
+
+DEFAULT_RECORD = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              ".last-argv.json")
+
+
+def main() -> int:
+    args = sys.argv[1:]
+
+    with open(os.environ.get("FAKE_SUBSTACK_ARGV", DEFAULT_RECORD), "w") as handle:
+        json.dump(args, handle)
+
+    if "--check" in args:
+        print("ok=1")
+        print("publication=https://example.substack.com")
+        print("user=Example Person")
+        return 0
+
+    published = "--publish" in args
+    print(f"status={'published' if published else 'draft'}")
+    print("url=https://example.substack.com/p/example")
+    print("draft_id=12345")
+    print("slug=example")
+    print("photos=3")
+    print(f"emailed={1 if published and '--no-email' not in args else 0}")
+    print("notified_ok=0")
+    print("notified_failed=0")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -75,19 +75,6 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
                     immediate = true,
                 },
             },
-            f:row {
-                spacing = f:control_spacing(),
-                f:static_text {
-                    title = 'Notify contacts:',
-                    alignment = 'right',
-                    width = LrView.share 'info_label_width',
-                },
-                f:edit_field {
-                    value = bind { key = 'notifyList', object = prefs },
-                    fill_horizontal = 1,
-                    immediate = true,
-                },
-            },
             f:static_text {
                 title = 'Your Substack credentials live in the .env file, never '
                     .. 'in Lightroom.',

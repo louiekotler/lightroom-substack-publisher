@@ -47,7 +47,6 @@ In the Plug-in Manager, fill in:
 |---|---|
 | **substack-post path** | full path to the executable, e.g. `/path/to/substack-automation/.venv/bin/substack-post` |
 | **.env file** | full path to the `.env` holding your Substack credentials |
-| **Notify contacts** | optional; only if you use *Notify contacts* |
 
 Press **Test**. It signs in and reports your publication, without posting
 anything. Your credentials stay in the `.env` file — Lightroom never sees them.
@@ -63,7 +62,7 @@ destination.
 | **Subtitle** | optional |
 | **Draft / Publish** | draft by default |
 | **Email subscribers** | publish only; on by default, matching Substack |
-| **Notify contacts** | publish only; texts your contact list via macOS Messages once the post is live |
+| **Notify contacts** | publish only; texts your contact list via macOS Messages once the post is live. The list is `notify_contacts.json` beside your `.env`, or wherever `NOTIFY_CONTACTS_FILE` points |
 | **Sign-off**, **Caption format** | optional overrides; blank means `substack-post`'s own defaults |
 | **RAW+JPEG** | for a raw shot alongside a JPEG, which of the two to post; the camera's JPEG by default — see below |
 
@@ -128,7 +127,7 @@ different publisher.
 
 ```
 <command> <photo-dir> --title <t> [--subtitle <s>]
-                      [--publish] [--no-email] [--notify] [--notify-list <p>]
+                      [--publish] [--no-email] [--notify]
                       [--signoff <text>] [--caption-format <fmt>]
                       --env-file <path> --yes --format kv
 ```
@@ -137,6 +136,9 @@ different publisher.
   else. The plug-in creates it, and deletes it however the export ends.
 - `--yes` is always passed: Lightroom gives the subprocess no terminal, so the
   tool must never prompt. The confirmation you saw was the plug-in's own.
+- `--env-file` is always passed, and anything else the tool needs is expected
+  to be found relative to it. Lightroom gives a subprocess an arbitrary working
+  directory, so a path relative to the cwd means nothing here.
 - `--format kv` asks for `key=value` lines on stdout. The plug-in needs `status`
   (`draft` or `published`) and `url`; `photos`, `notified_ok` and
   `notified_failed` fill in the result dialog. Anything on stderr is ignored.

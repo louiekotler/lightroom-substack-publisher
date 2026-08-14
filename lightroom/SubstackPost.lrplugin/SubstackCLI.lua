@@ -93,11 +93,9 @@ function SubstackCLI.post(settings, folder)
             table.insert(parts, '--no-email')
         end
         if settings.notify then
+            -- No --notify-list: substack-post looks beside the env file we
+            -- always name, which is where the contacts file belongs.
             table.insert(parts, '--notify')
-            if settings.notifyList and settings.notifyList ~= '' then
-                table.insert(parts, '--notify-list')
-                table.insert(parts, quote(settings.notifyList))
-            end
         end
     end
 

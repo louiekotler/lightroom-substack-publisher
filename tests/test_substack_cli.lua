@@ -76,14 +76,14 @@ args = receivedArguments()
 check('publishes when asked', contains(args, ' --publish '))
 check('suppresses the subscriber email when asked', contains(args, ' --no-email '))
 
-SubstackCLI.post(settings { publishMode = 'publish', notify = true,
-                            notifyList = '/tmp/contacts.json' }, '/tmp/b')
+SubstackCLI.post(settings { publishMode = 'publish', notify = true }, '/tmp/b')
 args = receivedArguments()
-check('passes notify and its contact list',
-    contains(args, ' --notify ') and contains(args, ' --notify-list /tmp/contacts.json '))
+check('passes notify', contains(args, ' --notify '))
+-- The contacts file is found beside the env file, so naming it would only be
+-- a second place for the path to be wrong.
+check('never names a contacts file', not contains(args, ' --notify-list '))
 
-SubstackCLI.post(settings { notify = true, notifyList = '/tmp/contacts.json' },
-    '/tmp/b')
+SubstackCLI.post(settings { notify = true }, '/tmp/b')
 check('never notifies for a draft', not contains(receivedArguments(), ' --notify '))
 
 SubstackCLI.post(settings { title = "Anna's birthday" }, '/tmp/b')

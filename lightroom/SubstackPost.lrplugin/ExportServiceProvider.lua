@@ -39,7 +39,6 @@ provider.exportPresetFields = {
     -- them; see updateExportSettings.
     { key = 'command', default = '' },
     { key = 'envFile', default = '' },
-    { key = 'notifyList', default = '' },
 }
 
 -- Lightroom renders to a temporary folder when the destination is hidden,
@@ -92,7 +91,6 @@ function provider.startDialog(propertyTable)
     local prefs = LrPrefs.prefsForPlugin()
     propertyTable.command = prefs.command or ''
     propertyTable.envFile = prefs.envFile or ''
-    propertyTable.notifyList = prefs.notifyList or ''
 
     -- Export preset fields persist between exports. A title belongs to one
     -- post, so inheriting the last one is how the wrong headline gets used.
@@ -111,7 +109,6 @@ function provider.endDialog(propertyTable)
     local prefs = LrPrefs.prefsForPlugin()
     prefs.command = propertyTable.command
     prefs.envFile = propertyTable.envFile
-    prefs.notifyList = propertyTable.notifyList
 end
 
 -- Called before every export, including one run straight from a saved preset
@@ -121,7 +118,6 @@ function provider.updateExportSettings(exportSettings)
     local prefs = LrPrefs.prefsForPlugin()
     exportSettings.command = prefs.command or ''
     exportSettings.envFile = prefs.envFile or ''
-    exportSettings.notifyList = prefs.notifyList or ''
 end
 
 local function testConnection(propertyTable)
@@ -311,21 +307,6 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
                     immediate = true,
                     tooltip = 'Full path to the .env holding your Substack '
                         .. 'credentials.',
-                },
-            },
-            f:row {
-                spacing = f:control_spacing(),
-                f:static_text {
-                    title = 'Notify contacts:',
-                    alignment = 'right',
-                    width = LrView.share 'setup_label_width',
-                },
-                f:edit_field {
-                    value = bind 'notifyList',
-                    fill_horizontal = 1,
-                    immediate = true,
-                    tooltip = 'Optional. Full path to the notify contacts JSON '
-                        .. 'file, if you use Notify contacts.',
                 },
             },
         },

@@ -20,6 +20,15 @@ modules.LrPathUtils = {
     leafName = function(path)
         return string.match(path, '[^/]+$') or path
     end,
+    extension = function(path)
+        return string.match(path, '%.([^./]+)$') or ''
+    end,
+    removeExtension = function(path)
+        return (string.gsub(path, '%.[^./]+$', ''))
+    end,
+    addExtension = function(path, extension)
+        return path .. '.' .. extension
+    end,
 }
 
 modules.LrFileUtils = {
@@ -37,6 +46,15 @@ modules.LrFileUtils = {
     end,
     delete = function(path)
         os.remove(path)
+    end,
+    copy = function(from, to)
+        local source = io.open(from, 'rb')
+        if not source then return false end
+        local destination = io.open(to, 'wb')
+        destination:write(source:read('*a'))
+        source:close()
+        destination:close()
+        return true
     end,
 }
 

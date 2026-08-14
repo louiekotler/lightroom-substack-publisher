@@ -65,6 +65,7 @@ destination.
 | **Email subscribers** | publish only; on by default, matching Substack |
 | **Notify contacts** | publish only; texts your contact list via macOS Messages once the post is live |
 | **Sign-off**, **Caption format** | optional overrides; blank means `substack-post`'s own defaults |
+| **RAW+JPEG** | for a raw shot alongside a JPEG, which of the two to post; the camera's JPEG by default — see below |
 
 Choosing **Publish** asks for confirmation first, naming your publication, the
 number of photos, and whether subscribers will be emailed. **Publishing cannot
@@ -86,6 +87,39 @@ whether it carries the coordinates of your house is your decision, not this
 plug-in's.
 
 Photos with no capture time at all go last, in the order you selected them.
+
+## RAW+JPEG pairs
+
+A photo shot RAW+JPEG is a single photo in Lightroom — the raw file, with the
+JPEG attached beside it — so a plain export renders the raw and the camera's own
+JPEG never appears. That JPEG is usually the version you meant (in-camera
+processing, film simulations, and the frame you actually saw), so **RAW+JPEG
+defaults to *Post the camera's JPEG***. Set it to *Post Lightroom's render* to
+send your edited version instead.
+
+Photos that aren't raw, and raws with no JPEG beside them, are unaffected either
+way — they always post Lightroom's render.
+
+Detection is a filesystem check: the JPEG sitting next to the catalog's file,
+tried as `.JPG`, `.jpg`, `.JPEG`, `.jpeg`. Lightroom does not expose its
+RAW+JPEG pairing to plug-ins — the badge you see in the grid comes from the
+catalog, and nothing in a photo's metadata mentions the sibling — so the
+filesystem is the only place to look.
+
+Three things to know:
+
+- **Your develop edits do not apply.** The camera's JPEG knows nothing about
+  the catalog, so a raw you have edited posts unedited. Since this is the
+  default, the result dialog says how many photos came from the camera —
+  otherwise it would be silent.
+- **Virtual copies always use the render**, on the grounds that making one is a
+  deliberate request for different treatment.
+- **Lightroom's Image Sizing does not apply either.** A camera JPEG is uploaded
+  at its original size — often 10 MB or more, where a render is usually a
+  fraction of that. If a post feels slow to upload, this is why.
+
+If the JPEG is missing or its volume is unmounted, the render is posted instead.
+A posted photo beats a failed one.
 
 ## How the plug-in calls substack-post
 
@@ -123,6 +157,7 @@ Needs `lua` on your PATH; nothing contacts Substack.
 
 ```bash
 lua tests/test_substack_cli.lua
+lua tests/test_sources.lua
 ```
 
 ## License

@@ -22,6 +22,7 @@ local LrTasks = import 'LrTasks'
 local LrFunctionContext = import 'LrFunctionContext'
 
 local SubstackCLI = require 'SubstackCLI'
+local Sources = require 'Sources'
 
 local provider = {}
 
@@ -33,6 +34,7 @@ provider.exportPresetFields = {
     { key = 'notify', default = false },
     { key = 'signoff', default = '' },
     { key = 'captionFormat', default = '' },
+    { key = 'rawPlusJpeg', default = 'jpeg' },
     -- Mirrored from the plug-in's preferences so processRenderedPhotos has
     -- them; see updateExportSettings.
     { key = 'command', default = '' },
@@ -48,18 +50,18 @@ provider.allowFileFormats = { 'JPEG' }
 provider.allowColorSpaces = { 'sRGB' }
 provider.canExportVideo = false
 
-local METADATA_STRIPPED = 'Photos are ordered and captioned by the date they '
-    .. 'were taken, which this Metadata setting removes. Choose one that keeps '
-    .. 'EXIF, or the post will come out unordered and uncaptioned.'
+local METADATA_STRIPPED =
+    'Photos are ordered and captioned by the date they were taken,\n'
+    .. 'which this Metadata setting removes. Choose one that keeps\n'
+    .. 'EXIF, or the post comes out unordered and uncaptioned.'
 
 local function stripsCaptureTime(propertyTable)
     return propertyTable.LR_embeddedMetadataOption == 'copyrightOnly'
         or propertyTable.LR_minimizeEmbeddedMetadata == true
 end
 
--- These run on every keystroke in the observed fields, and re-writing a value
--- that has not changed makes Lightroom redo the dialog for nothing — which it
--- does slowly enough to drop the keystrokes that follow.
+-- Runs on every keystroke in the observed fields; re-writing an unchanged
+-- value makes Lightroom redo the dialog for nothing.
 local function setIfChanged(propertyTable, key, value)
     if propertyTable[key] ~= value then
         propertyTable[key] = value
@@ -203,9 +205,6 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
                     enabled = bind 'publishing',
                 },
             },
-            -- An unconstrained static_text reports its whole unwrapped width as
-            -- its minimum, which widens the section past the dialog and clips
-            -- everything to its right. width_in_chars is what makes it wrap.
             f:static_text {
                 title = 'A draft can be edited and discarded in Substack. '
                     .. 'Publishing cannot be undone.',
@@ -215,7 +214,6 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
             f:static_text {
                 title = bind 'metadataWarning',
                 text_color = LrColor(0.6, 0, 0),
-                width_in_chars = 60,
                 height_in_lines = 3,
             },
         },
@@ -251,6 +249,30 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
                     tooltip = 'strftime format for each photo\'s date caption, '
                         .. 'e.g. %B {day}, %Y. Leave blank for the default.',
                 },
+            },
+            f:row {
+                spacing = f:control_spacing(),
+                f:static_text {
+                    title = 'RAW+JPEG:',
+                    alignment = 'right',
+                    width = LrView.share 'options_label_width',
+                },
+                f:popup_menu {
+                    value = bind 'rawPlusJpeg',
+                    items = {
+                        { title = 'Post the camera\'s JPEG', value = 'jpeg' },
+                        { title = 'Post Lightroom\'s render', value = 'render' },
+                    },
+                },
+            },
+            f:static_text {
+                -- Wrapped by hand: width_in_chars sets a width without making
+                -- Lightroom wrap to it, so long prose is clipped instead.
+                title = 'A photo shot RAW+JPEG is one photo in Lightroom, and\n'
+                    .. 'this chooses which half to post. The camera\'s JPEG\n'
+                    .. 'carries none of your develop edits. Virtual copies\n'
+                    .. 'keep the render, as does a raw with no JPEG beside it.',
+                height_in_lines = 4,
             },
         },
         {
@@ -330,7 +352,7 @@ end
 
 --- Ask before doing something irreversible, naming the publication it will
 -- happen to. The check also fails early, before a single photo is uploaded.
-local function confirmPublish(settings, photoCount)
+local function confirmPublish(settings, photoCount, fromCamera)
     local check = SubstackCLI.check(settings.command, settings.envFile)
     if not check.ok then
         return false, check.message
@@ -344,6 +366,9 @@ local function confirmPublish(settings, photoCount)
     if settings.notify then
         table.insert(lines, 'Notify: yes, your contacts will be texted')
     end
+    if fromCamera > 0 then
+        table.insert(lines, 'From the camera\'s JPEG, unedited: ' .. fromCamera)
+    end
 
     local choice = LrDialogs.confirm(
         'Publish "' .. settings.title .. '" to Substack?',
@@ -353,9 +378,14 @@ local function confirmPublish(settings, photoCount)
     return choice == 'ok', nil
 end
 
-local function showResult(result, settings)
+local function showResult(result, settings, fromCamera)
     local published = result.status == 'published'
     local body = published and 'Your post is live.' or 'Your draft is ready to edit.'
+    if fromCamera > 0 then
+        body = body .. '\n\n' .. fromCamera .. ' photo(s) came from the camera\'s '
+            .. 'JPEG rather than Lightroom\'s render, so your develop edits are '
+            .. 'not in them.'
+    end
     if published and settings.notify then
         body = body .. '\n\nContacts texted: ' .. result.notifiedOk
         if result.notifiedFailed > 0 then
@@ -400,6 +430,7 @@ function provider.processRenderedPhotos(functionContext, exportContext)
     local folder = makeBatchFolder()
     local files = {}
     local failures = {}
+    local fromCamera = 0
 
     for _, rendition in exportContext:renditions { stopIfCanceled = true } do
         local rendered, pathOrMessage = rendition:waitForRender()
@@ -410,12 +441,27 @@ function provider.processRenderedPhotos(functionContext, exportContext)
             rendition:uploadFailed(pathOrMessage
                 or 'Lightroom could not render this photo.')
         else
+            local photo = rendition.photo
+            local source, why = Sources.chooseFile(pathOrMessage,
+                photo:getRawMetadata('path'), settings.rawPlusJpeg,
+                photo:getRawMetadata('isVirtualCopy'))
+
             -- substack-post orders by capture time and breaks ties by filename,
             -- so the index keeps undated photos in the order they were selected.
             local name = string.format('%04d_%s', #files + 1,
-                LrPathUtils.leafName(pathOrMessage))
+                LrPathUtils.leafName(source))
             local destination = LrPathUtils.child(folder, name)
-            LrFileUtils.move(pathOrMessage, destination)
+
+            if why == 'sidecar-jpeg' then
+                -- Copy: this one lives in the user's library. Only the render
+                -- is ours to move.
+                LrFileUtils.copy(source, destination)
+                LrFileUtils.delete(pathOrMessage)
+                fromCamera = fromCamera + 1
+            else
+                LrFileUtils.move(pathOrMessage, destination)
+            end
+
             if LrFileUtils.exists(destination) then
                 table.insert(files, destination)
             else
@@ -441,7 +487,7 @@ function provider.processRenderedPhotos(functionContext, exportContext)
 
     if settings.publishMode == 'publish' then
         progress:setCaption('Checking your Substack account')
-        local confirmed, problem = confirmPublish(settings, #files)
+        local confirmed, problem = confirmPublish(settings, #files, fromCamera)
         if problem then
             cleanUp(folder, files)
             LrDialogs.message('Could not reach Substack', problem, 'critical')
@@ -468,7 +514,7 @@ function provider.processRenderedPhotos(functionContext, exportContext)
                 .. 'post:\n\n' .. failures[1], 'warning')
     end
 
-    showResult(result, settings)
+    showResult(result, settings, fromCamera)
 end
 
 return provider

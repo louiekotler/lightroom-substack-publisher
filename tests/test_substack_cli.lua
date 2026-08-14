@@ -13,22 +13,13 @@ package.path = 'tests/?.lua;lightroom/SubstackPost.lrplugin/?.lua;' .. package.p
 require('lrstub').install()
 
 local SubstackCLI = require 'SubstackCLI'
+local check = require('harness').check
+local finish = require('harness').finish
 
 local FAKE = 'tests/fake-substack-post'
 local BROKEN = 'tests/broken-substack-post'
 local SILENT = '/usr/bin/true'  -- exits 0, says nothing
 local ARGV_RECORD = 'tests/.last-argv.json'
-
-local failures = 0
-
-local function check(name, condition, detail)
-    if condition then
-        print('  ok   ' .. name)
-    else
-        failures = failures + 1
-        print('  FAIL ' .. name .. (detail and ('  — ' .. detail) or ''))
-    end
-end
 
 --- The arguments the fake tool received last, space-joined and padded, so a
 -- plain substring search can match whole arguments.
@@ -131,6 +122,4 @@ check('surfaces a failure', not SubstackCLI.check(BROKEN).ok)
 check('treats an unconfirmed sign-in as a failure', not SubstackCLI.check(SILENT).ok)
 
 os.remove(ARGV_RECORD)
-print(failures == 0 and '\nall tests passed'
-    or ('\n' .. failures .. ' test(s) failed'))
-os.exit(failures == 0 and 0 or 1)
+finish()

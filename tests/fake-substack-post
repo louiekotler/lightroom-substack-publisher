@@ -13,9 +13,28 @@ tests/.last-argv.json beside this script's own directory.
 import json
 import os
 import sys
+import time
 
 DEFAULT_RECORD = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               ".last-argv.json")
+
+
+def progress_file(args):
+    if "--progress-file" not in args:
+        return None
+    return args[args.index("--progress-file") + 1]
+
+
+def report_progress(path) -> None:
+    """Move through a few positions slowly enough for a poller to see them.
+
+    The real tool writes one position per step of the run; what matters to the
+    plug-in is that the file changes while the command is still going.
+    """
+    for step in (1, 2, 3):
+        with open(path, "w") as handle:
+            handle.write(f"step={step}\ntotal=3\nlabel=Step {step}\n")
+        time.sleep(0.3)
 
 
 def main() -> int:
@@ -29,6 +48,10 @@ def main() -> int:
         print("publication=https://example.substack.com")
         print("user=Example Person")
         return 0
+
+    path = progress_file(args)
+    if path:
+        report_progress(path)
 
     published = "--publish" in args
     print(f"status={'published' if published else 'draft'}")

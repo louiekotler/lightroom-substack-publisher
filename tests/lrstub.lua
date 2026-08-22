@@ -65,6 +65,11 @@ modules.LrTasks = {
         if type(ok) == 'number' then return ok end
         return ok and 0 or (code or 1)
     end,
+    -- Lightroom yields here, which is what lets the UI redraw while a command
+    -- runs. Outside it, actually waiting is what makes the polling loop poll.
+    sleep = function(seconds)
+        os.execute('sleep ' .. tostring(seconds))
+    end,
 }
 
 function stub.install()

@@ -97,6 +97,40 @@ check('passes the optional post settings',
     contains(args, ' --signoff See you next time ') and
     contains(args, ' --caption-format %B %Y '))
 
+print('SubstackCLI.post: watching it run')
+
+-- The point of the whole arrangement: the caller has to hear about the post
+-- *while* it is being made. Before this the command blocked until it was
+-- finished, so the plug-in had nothing to show for its entire duration —
+-- which is most of the wait.
+local WATCHED = '/tmp/substack-watched-position'
+local seen = {}
+local watched = SubstackCLI.post(settings(), '/tmp/b', WATCHED, function()
+    local LrFileUtils = import 'LrFileUtils'
+    if LrFileUtils.exists(WATCHED) then
+        local text = LrFileUtils.readFile(WATCHED) or ''
+        local step = string.match(text, 'step=(%d+)')
+        if step then seen[step] = true end
+    end
+end)
+os.remove(WATCHED)
+
+local distinct = 0
+for _ in pairs(seen) do distinct = distinct + 1 end
+
+check('the post still succeeds while being watched', watched.ok == true,
+    tostring(watched.message))
+check('the position is seen moving, not just its final value', distinct > 1,
+    distinct .. ' distinct position(s) seen')
+check('the position file is passed to the tool',
+    contains(receivedArguments(), ' --progress-file ' .. WATCHED .. ' '))
+
+SubstackCLI.post(settings(), '/tmp/b')
+check('and is absent when none is wanted',
+    not contains(receivedArguments(), ' --progress-file '))
+
+print('SubstackCLI.post, continued')
+
 result = SubstackCLI.post(settings { command = '' }, '/tmp/b')
 check('refuses without a command path', not result.ok and
     contains(result.message, 'No substack-post path'))

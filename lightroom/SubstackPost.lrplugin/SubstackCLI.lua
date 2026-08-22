@@ -5,6 +5,11 @@
     temporary file and read back. The tool is asked for key=value output, which
     avoids bundling a JSON parser into this plugin.
 
+    Commands are started in the background and waited on in a loop, rather than
+    run to completion in one call: execute does not return until the process
+    exits, so a caller has nothing to report — and Lightroom nothing to
+    redraw — for as long as a post takes.
+
     Everything here must run inside a task — LrTasks.execute yields, and calling
     it straight from a UI callback throws. Callers from button actions have to
     wrap the call in LrTasks.startAsyncTask.
@@ -25,15 +30,42 @@ local function tempFile()
     return LrPathUtils.child(LrPathUtils.getStandardFilePath('temp'), name)
 end
 
-local function run(command)
+--- Run a command in the background, calling `onPoll` every so often until it
+-- finishes.
+--
+-- Waiting in a loop of our own, rather than letting execute block, is what
+-- makes progress possible at all: the sleep yields, so Lightroom gets to redraw
+-- and the caller gets to look at how far along the tool says it is. It also
+-- costs no second task, and assumes nothing about what Lightroom schedules
+-- while execute is blocked.
+--
+-- The exit status is written to a file rather than read from the shell, since
+-- the shell being waited on is the one that launched the job, not the job.
+local function run(command, onPoll)
     local outPath = tempFile()
-    local status = LrTasks.execute(command .. ' > ' .. quote(outPath) .. ' 2>&1')
+    local donePath = tempFile()
+
+    LrTasks.execute('{ ' .. command .. ' ; printf %s "$?" > ' .. quote(donePath)
+        .. ' ; } > ' .. quote(outPath) .. ' 2>&1 &')
+
+    local status = nil
+    while true do
+        if LrFileUtils.exists(donePath) then
+            -- The file appears before it is written, so an empty read means
+            -- "a moment more", not "finished with no status".
+            status = tonumber(LrFileUtils.readFile(donePath) or '')
+            if status then break end
+        end
+        if onPoll then onPoll() end
+        LrTasks.sleep(0.2)
+    end
 
     local output = ''
     if LrFileUtils.exists(outPath) then
         output = LrFileUtils.readFile(outPath) or ''
-        LrFileUtils.delete(outPath)
     end
+    LrFileUtils.delete(outPath)
+    LrFileUtils.delete(donePath)
     return status, output
 end
 
@@ -71,8 +103,11 @@ end
 --- Publish one folder of photos as a post.
 -- @param settings the export settings, plus command/envFile from preferences
 -- @param folder a directory holding only this post's photos
+-- @param progressPath optional file for the tool to keep its position in, so a
+--   caller can watch it while the post is being made
+-- @param onPoll optional function called every so often while the tool runs
 -- @return table with ok, status, url, photos, message
-function SubstackCLI.post(settings, folder)
+function SubstackCLI.post(settings, folder, progressPath, onPoll)
     if not settings.command or settings.command == '' then
         return { ok = false,
                  message = 'No substack-post path set in the plug-in settings.' }
@@ -113,8 +148,12 @@ function SubstackCLI.post(settings, folder)
     table.insert(parts, '--yes')
     table.insert(parts, '--format')
     table.insert(parts, 'kv')
+    if progressPath then
+        table.insert(parts, '--progress-file')
+        table.insert(parts, quote(progressPath))
+    end
 
-    local status, output = run(table.concat(parts, ' '))
+    local status, output = run(table.concat(parts, ' '), onPoll)
     if status ~= 0 then
         return { ok = false, message = failureMessage(status, output) }
     end
@@ -136,8 +175,9 @@ function SubstackCLI.post(settings, folder)
 end
 
 --- Verify the configuration without posting anything.
+-- @param onPoll optional function called every so often while the tool runs
 -- @return table with ok, publication, user, message
-function SubstackCLI.check(command, envFile)
+function SubstackCLI.check(command, envFile, onPoll)
     if not command or command == '' then
         return { ok = false, message = 'No path to substack-post was entered.' }
     end
@@ -147,7 +187,7 @@ function SubstackCLI.check(command, envFile)
     table.insert(parts, '--format')
     table.insert(parts, 'kv')
 
-    local status, output = run(table.concat(parts, ' '))
+    local status, output = run(table.concat(parts, ' '), onPoll)
     if status ~= 0 then
         return { ok = false, message = failureMessage(status, output) }
     end

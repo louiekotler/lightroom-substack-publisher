@@ -71,6 +71,11 @@ number of photos, and whether subscribers will be emailed. **Publishing cannot
 be undone** — a draft can be edited or thrown away in Substack, a published post
 cannot be unsent.
 
+Lightroom's own export progress covers rendering, which is over before the
+photos leave your machine. What follows — uploading them, drafting the post,
+publishing, texting anyone — gets a progress bar of its own, captioned with
+whatever `substack-post` says it is doing at that moment.
+
 When it's done, the plug-in shows the post's URL and offers to open it.
 
 ## Order and captions come from EXIF
@@ -130,6 +135,7 @@ different publisher.
                       [--publish] [--no-email] [--notify]
                       [--signoff <text>] [--caption-format <fmt>]
                       --env-file <path> --yes --format kv
+                      --progress-file <path>
 ```
 
 - `<photo-dir>` is a temporary folder holding this post's photos and nothing
@@ -145,11 +151,32 @@ different publisher.
 - `<command> --check --env-file <path> --format kv` verifies the configuration
   without posting, and answers with `ok=1`, `publication`, and `user`. That is
   what **Test** calls, and what runs before a publish.
+- `--progress-file` names a file the tool overwrites with where it has got to,
+  as `step=`/`total=`/`label=` lines. It is a position, not a log. The plug-in
+  polls it to move the progress bar, because output cannot be read until the
+  process has exited. A tool that ignores the flag costs nothing but the bar.
 - A failure means exiting non-zero and printing `error: <message>`. That message
   is shown to the user verbatim, so it has to read as a sentence.
 
 `kv` rather than JSON so that parsing takes one `string.match`, which keeps a
 third-party JSON library out of the plug-in bundle.
+
+## Working on the plug-in
+
+Two things about the SDK cost real time here, and neither is obvious from the
+symptom — which in both cases is a dialog that sits there saying nothing:
+
+- **`LrTasks.execute` does not return until the process exits.** A caller has
+  nothing to report for the whole run, however willing it is. Commands are
+  started in the background instead (`{ … ; printf %s "$?" > done ; } … &`) and
+  waited on in an ordinary loop, whose `LrTasks.sleep` yields so Lightroom can
+  redraw. The exit status comes from that file, since the shell being waited on
+  is the one that launched the job, not the job.
+- **An export's progress scope belongs to rendering.** By the time
+  `processRenderedPhotos` has drained its renditions that scope is finished, and
+  `setCaption` on it shows nobody anything. Everything after rendering gets an
+  `LrProgressScope` of its own, tied to the export's function context so it is
+  taken down however the export ends.
 
 ## Tests
 

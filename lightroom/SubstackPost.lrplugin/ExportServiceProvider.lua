@@ -20,6 +20,7 @@ local LrPathUtils = import 'LrPathUtils'
 local LrPrefs = import 'LrPrefs'
 local LrTasks = import 'LrTasks'
 local LrFunctionContext = import 'LrFunctionContext'
+local LrProgressScope = import 'LrProgressScope'
 
 local SubstackCLI = require 'SubstackCLI'
 local Sources = require 'Sources'
@@ -331,16 +332,67 @@ local function cleanUp(folder, files)
     LrFileUtils.delete(folder)
 end
 
+--- "3 photos" / "1 photo". Avoids "photo(s)", which no one writes by hand.
+local function photoCount(n)
+    return n .. (n == 1 and ' photo' or ' photos')
+end
+
+--- Run something that takes a while, showing how far along it is.
+--
+-- A scope of its own rather than the export's: Lightroom's export progress
+-- belongs to rendering, and rendering has finished by the time any of this
+-- starts. Everything after it — uploading, drafting, publishing, texting — is
+-- the longer wait of the two and the one with nothing else on screen.
+--
+-- The scope is tied to the export's function context, so it is taken down
+-- however the export ends, including on an error.
+--
+-- @param work function(progressPath, onPoll) -> result
+-- @return whatever `work` returned
+local function withProgress(context, title, work)
+    local path = LrPathUtils.child(LrPathUtils.getStandardFilePath('temp'),
+        'substack-post-progress-' .. tostring(math.random(100000, 999999)))
+
+    local scope = LrProgressScope { title = title, functionContext = context }
+
+    local function onPoll()
+        local text = LrFileUtils.exists(path) and LrFileUtils.readFile(path) or nil
+        if not text then return end
+        -- substack-post overwrites this file with where it has got to, so a
+        -- half-written read simply fails to match and the next poll picks it
+        -- up. There is nothing here worth locking for.
+        local step = tonumber(string.match(text, 'step=(%d+)'))
+        local total = tonumber(string.match(text, 'total=(%d+)'))
+        local label = string.match(text, 'label=([^\r\n]*)')
+        if not step or not total or total == 0 then return end
+        if label and label ~= '' then scope:setCaption(label) end
+        -- `step` is the one being started, so it is not finished yet.
+        scope:setPortionComplete(step - 1, total)
+    end
+
+    local result = work(path, onPoll)
+
+    scope:done()
+    LrFileUtils.delete(path)
+    return result
+end
+
 --- Ask before doing something irreversible, naming the publication it will
 -- happen to. The check also fails early, before a single photo is uploaded.
-local function confirmPublish(settings, photoCount, fromCamera)
-    local check = SubstackCLI.check(settings.command, settings.envFile)
+local function confirmPublish(context, settings, photos, fromCamera)
+    -- Signing in is a round trip to Substack, and the export's own bar is
+    -- finished by now, so this would otherwise be a few seconds of nothing
+    -- before the dialog appears.
+    local check = withProgress(context, 'Checking your Substack account',
+        function(_, onPoll)
+            return SubstackCLI.check(settings.command, settings.envFile, onPoll)
+        end)
     if not check.ok then
         return false, check.message
     end
 
     local lines = {
-        'Photos: ' .. photoCount,
+        'Photos: ' .. photos,
         'Publication: ' .. (check.publication or 'unknown'),
         'Email: ' .. (settings.sendEmail and 'yes, all subscribers' or 'no (web only)'),
     }
@@ -467,8 +519,8 @@ function provider.processRenderedPhotos(functionContext, exportContext)
     end
 
     if settings.publishMode == 'publish' then
-        progress:setCaption('Checking your Substack account')
-        local confirmed, problem = confirmPublish(settings, #files, fromCamera)
+        local confirmed, problem = confirmPublish(functionContext, settings, #files,
+            fromCamera)
         if problem then
             cleanUp(folder, files)
             LrDialogs.message('Could not reach Substack', problem, 'critical')
@@ -480,8 +532,12 @@ function provider.processRenderedPhotos(functionContext, exportContext)
         end
     end
 
-    progress:setCaption('Uploading to Substack')
-    local result = SubstackCLI.post(settings, folder)
+    local result = withProgress(functionContext,
+        (settings.publishMode == 'publish' and 'Publishing ' or 'Drafting ')
+            .. photoCount(#files) .. ' on Substack',
+        function(progressPath, onPoll)
+            return SubstackCLI.post(settings, folder, progressPath, onPoll)
+        end)
     cleanUp(folder, files)
 
     if not result.ok then

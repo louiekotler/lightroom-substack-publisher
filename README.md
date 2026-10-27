@@ -60,16 +60,40 @@ destination.
 |---|---|
 | **Title** | required; cleared each time, so no post inherits the last one's headline |
 | **Subtitle** | optional |
-| **Draft / Publish** | draft by default |
-| **Email subscribers** | publish only; on by default, matching Substack |
-| **Notify contacts** | publish only; texts your contact list via macOS Messages once the post is live. The list is `notify_contacts.json` beside your `.env`, or wherever `NOTIFY_CONTACTS_FILE` points |
+| **Draft / Publish now / Schedule** | draft by default |
+| **When** | **Now**, or for **Schedule** the time it goes live. **Choose…** opens macOS's calendar and time picker. Starts at your last time of day, next occurrence, 8:00 AM until you pick one |
+| **Email subscribers** | publish or schedule only; on by default, matching Substack |
+| **Notify contacts** | publish or schedule only; texts your contact list via macOS Messages once the post is live. The list is `notify_contacts.json` beside your `.env`, or wherever `NOTIFY_CONTACTS_FILE` points |
 | **Sign-off**, **Caption format** | optional overrides; blank means `substack-post`'s own defaults |
 | **RAW+JPEG** | for a raw shot alongside a JPEG, which of the two to post; the camera's JPEG by default — see below |
 
-Choosing **Publish** asks for confirmation first, naming your publication, the
-number of photos, and whether subscribers will be emailed. **Publishing cannot
-be undone** — a draft can be edited or thrown away in Substack, a published post
-cannot be unsent.
+Choosing **Publish now** or **Schedule** asks for confirmation first, naming
+your publication, the number of photos, whether subscribers will be emailed,
+and when, for a schedule. **Publishing cannot be undone**: a draft can be
+edited or thrown away in Substack, a published post cannot be unsent.
+
+### Scheduling
+
+**Schedule** is for choosing photos at night and having the post go out in the
+morning. The photos are uploaded and the post is set up straight away, and
+Substack publishes it, and sends the email, at the time you chose, by itself.
+Until then it shows as *Scheduled* in Substack, where you can still edit,
+move or cancel it.
+
+**Notify contacts** works differently for a scheduled post, because only your
+Mac can send the texts. `substack-post` leaves a small macOS job behind that
+runs when the post goes live, checks with Substack that it really is live,
+texts everyone, and removes itself. It sends nothing if you cancelled the post
+in Substack, and nothing if your Mac was asleep or off until more than a day
+after the post went live. Either way a notification tells you what happened.
+The details are in
+[substack-automation's README](https://github.com/louiekotler/substack-automation#scheduling-a-post).
+
+The first time, macOS may ask whether Python may control Messages. Allow it:
+that is the job that sends the texts. The result dialog says whether it can.
+
+The picker is `DatePicker.js`, run with `osascript`, since Lightroom's SDK has
+no date or time control. It ships with macOS, so there is nothing to install.
 
 Lightroom's own export progress covers rendering, which is over before the
 photos leave your machine. What follows — uploading them, drafting the post,
@@ -132,7 +156,7 @@ different publisher.
 
 ```
 <command> <photo-dir> --title <t> [--subtitle <s>]
-                      [--publish] [--no-email] [--notify]
+                      [--publish | --schedule <when>] [--no-email] [--notify]
                       [--signoff <text>] [--caption-format <fmt>]
                       --env-file <path> --yes --format kv
                       --progress-file <path>
@@ -145,12 +169,16 @@ different publisher.
 - `--env-file` is always passed, and anything else the tool needs is expected
   to be found relative to it. Lightroom gives a subprocess an arbitrary working
   directory, so a path relative to the cwd means nothing here.
+- `--schedule <when>` gives a local time with no offset, `YYYY-MM-DDTHH:MM`.
+  The tool works out the offset for that date.
 - `--format kv` asks for `key=value` lines on stdout. The plug-in needs `status`
-  (`draft` or `published`) and `url`; `photos`, `notified_ok` and
-  `notified_failed` fill in the result dialog. Anything on stderr is ignored.
+  (`draft`, `published` or `scheduled`) and `url`; `photos`, `notified_ok`,
+  `notified_failed` and, for a schedule, `messages_check` (`ok`,
+  `failed: <why>` or `pending`) fill in the result dialog. Anything on stderr
+  is ignored.
 - `<command> --check --env-file <path> --format kv` verifies the configuration
   without posting, and answers with `ok=1`, `publication`, and `user`. That is
-  what **Test** calls, and what runs before a publish.
+  what **Test** calls, and what runs before a publish or a schedule.
 - `--progress-file` names a file the tool overwrites with where it has got to,
   as `step=`/`total=`/`label=` lines. It is a position, not a log. The plug-in
   polls it to move the progress bar, because output cannot be read until the
@@ -178,6 +206,10 @@ symptom — which in both cases is a dialog that sits there saying nothing:
   `LrProgressScope` of its own, tied to the export's function context so it is
   taken down however the export ends.
 
+And one that costs only confusion: **Reload Plug-in does not pick up a new
+`.lua` file.** Lightroom scans the bundle's scripts when the plug-in is added,
+so after adding one, remove the plug-in and add it again.
+
 ## Tests
 
 The Lua that builds those commands is tested against a stand-in for
@@ -187,6 +219,7 @@ Needs `lua` on your PATH; nothing contacts Substack.
 ```bash
 lua tests/test_substack_cli.lua
 lua tests/test_sources.lua
+lua tests/test_schedule.lua
 ```
 
 ## License

@@ -2,7 +2,7 @@
 """A stand-in for substack-post that talks to nobody.
 
 It implements the contract the plug-in relies on — kv output on stdout, the
-right keys for a draft, a publish and a --check — and records the argv it was
+right keys for a draft, a publish, a schedule and a --check — and records the argv it was
 handed, so the Lua side can be tested without a Substack account and without
 uploading anything.
 
@@ -54,14 +54,20 @@ def main() -> int:
         report_progress(path)
 
     published = "--publish" in args
-    print(f"status={'published' if published else 'draft'}")
+    scheduled = "--schedule" in args
+    status = "published" if published else "scheduled" if scheduled else "draft"
+    print(f"status={status}")
     print("url=https://example.substack.com/p/example")
     print("draft_id=12345")
     print("slug=example")
     print("photos=3")
-    print(f"emailed={1 if published and '--no-email' not in args else 0}")
+    going_out = published or scheduled
+    print(f"emailed={1 if going_out and '--no-email' not in args else 0}")
     print("notified_ok=0")
     print("notified_failed=0")
+    when = args[args.index("--schedule") + 1] if scheduled else ""
+    print(f"scheduled_for={when}")
+    print(f"messages_check={'ok' if scheduled and '--notify' in args else ''}")
     return 0
 
 

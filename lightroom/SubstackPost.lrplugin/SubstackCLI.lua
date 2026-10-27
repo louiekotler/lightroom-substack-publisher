@@ -106,8 +106,10 @@ end
 -- @param progressPath optional file for the tool to keep its position in, so a
 --   caller can watch it while the post is being made
 -- @param onPoll optional function called every so often while the tool runs
--- @return table with ok, status, url, photos, message
-function SubstackCLI.post(settings, folder, progressPath, onPoll)
+-- @param scheduleAt when publishMode is 'schedule', the local time to go live
+--   as "YYYY-MM-DDTHH:MM"
+-- @return table with ok, status, url, photos, messagesCheck, message
+function SubstackCLI.post(settings, folder, progressPath, onPoll, scheduleAt)
     if not settings.command or settings.command == '' then
         return { ok = false,
                  message = 'No substack-post path set in the plug-in settings.' }
@@ -122,8 +124,13 @@ function SubstackCLI.post(settings, folder, progressPath, onPoll)
         table.insert(parts, quote(settings.subtitle))
     end
 
-    if settings.publishMode == 'publish' then
-        table.insert(parts, '--publish')
+    if settings.publishMode == 'publish' or settings.publishMode == 'schedule' then
+        if settings.publishMode == 'publish' then
+            table.insert(parts, '--publish')
+        else
+            table.insert(parts, '--schedule')
+            table.insert(parts, quote(scheduleAt or ''))
+        end
         if not settings.sendEmail then
             table.insert(parts, '--no-email')
         end
@@ -171,6 +178,9 @@ function SubstackCLI.post(settings, folder, progressPath, onPoll)
         photos = tonumber(values.photos),
         notifiedOk = tonumber(values.notified_ok) or 0,
         notifiedFailed = tonumber(values.notified_failed) or 0,
+        -- For a scheduled post: whether the job that will text contacts can
+        -- reach Messages — 'ok', 'failed: <why>', 'pending', or '' if none.
+        messagesCheck = values.messages_check or '',
     }
 end
 

@@ -86,6 +86,20 @@ check('never names a contacts file', not contains(args, ' --notify-list '))
 SubstackCLI.post(settings { notify = true }, '/tmp/b')
 check('never notifies for a draft', not contains(receivedArguments(), ' --notify '))
 
+result = SubstackCLI.post(settings { publishMode = 'schedule', notify = true,
+    sendEmail = false }, '/tmp/b', nil, nil, '2026-10-28T08:00')
+args = receivedArguments()
+check('schedules at the time given', contains(args, ' --schedule 2026-10-28T08:00 '))
+check('a scheduled post is not published now', not contains(args, ' --publish '))
+check('passes email and notify for a scheduled post',
+    contains(args, ' --no-email ') and contains(args, ' --notify '))
+check('reports a scheduled status', result.ok and result.status == 'scheduled',
+    tostring(result.message))
+check('reports whether the texts can reach Messages', result.messagesCheck == 'ok')
+
+result = SubstackCLI.post(settings(), '/tmp/b')
+check('no Messages check without a schedule', result.messagesCheck == '')
+
 SubstackCLI.post(settings { title = "Anna's birthday" }, '/tmp/b')
 check('survives an apostrophe in the title',
     contains(receivedArguments(), " Anna's birthday "))

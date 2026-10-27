@@ -24,6 +24,7 @@ local LrProgressScope = import 'LrProgressScope'
 
 local SubstackCLI = require 'SubstackCLI'
 local Sources = require 'Sources'
+local Schedule = require 'Schedule'
 
 local provider = {}
 
@@ -31,6 +32,9 @@ provider.exportPresetFields = {
     { key = 'title', default = '' },
     { key = 'subtitle', default = '' },
     { key = 'publishMode', default = 'draft' },
+    -- Seconds since 1970. Set afresh each time the dialog opens; only the
+    -- time of day carries over, through preferences.
+    { key = 'scheduleAt', default = 0 },
     { key = 'sendEmail', default = true },
     { key = 'notify', default = false },
     { key = 'signoff', default = '' },
@@ -73,9 +77,14 @@ local function updateWarnings(propertyTable)
         stripsCaptureTime(propertyTable) and METADATA_STRIPPED or '')
 
     -- Emailing subscribers and texting contacts only mean anything when the
-    -- post is actually going out.
+    -- post is actually going out, now or later.
     setIfChanged(propertyTable, 'publishing',
-        propertyTable.publishMode == 'publish')
+        propertyTable.publishMode ~= 'draft')
+    local scheduling = propertyTable.publishMode == 'schedule'
+    setIfChanged(propertyTable, 'scheduling', scheduling)
+
+    setIfChanged(propertyTable, 'scheduleText',
+        scheduling and Schedule.describe(propertyTable.scheduleAt) or 'Now')
 
     -- Refusing here greys out Lightroom's own Export button with the reason
     -- attached, which beats failing after every photo has been rendered.
@@ -98,7 +107,12 @@ function provider.startDialog(propertyTable)
     propertyTable.title = ''
     propertyTable.subtitle = ''
 
+    -- A date belongs to one post too. The time of day is the usual one.
+    propertyTable.scheduleAt = Schedule.default(os.time(),
+        prefs.scheduleHour or 8, prefs.scheduleMinute or 0)
+
     for _, key in ipairs { 'title', 'command', 'publishMode',
+                           'scheduleAt',
                            'LR_embeddedMetadataOption',
                            'LR_minimizeEmbeddedMetadata' } do
         propertyTable:addObserver(key, updateWarnings)
@@ -139,6 +153,29 @@ local function testConnection(propertyTable)
                 LrDialogs.message('Could not reach Substack', result.message, 'warning')
             end
         end)
+    end)
+end
+
+--- Ask for a date and time with macOS's own picker (DatePicker.js), which
+-- Lightroom's SDK has no equivalent of, and remember the time of day. The
+-- picker offers nothing too soon to schedule.
+local function chooseTime(propertyTable)
+    LrTasks.startAsyncTask(function()
+        local now = os.time()
+        local out = LrPathUtils.child(LrPathUtils.getStandardFilePath('temp'),
+            'substack-post-date-' .. tostring(math.random(100000, 999999)))
+        LrTasks.execute(string.format(
+            "osascript -l JavaScript '%s' %d %d 'Schedule' > '%s'",
+            LrPathUtils.child(_PLUGIN.path, 'DatePicker.js'),
+            propertyTable.scheduleAt or now, now + Schedule.LEAD, out))
+        local chosen = tonumber(LrFileUtils.exists(out)
+            and LrFileUtils.readFile(out) or '')
+        LrFileUtils.delete(out)
+        if not chosen then return end  -- cancelled
+
+        propertyTable.scheduleAt = chosen
+        local prefs = LrPrefs.prefsForPlugin()
+        prefs.scheduleHour, prefs.scheduleMinute = Schedule.timeOfDay(chosen)
     end)
 end
 
@@ -187,9 +224,14 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
                     checked_value = 'draft',
                 },
                 f:radio_button {
-                    title = 'Publish',
+                    title = 'Publish now',
                     value = bind 'publishMode',
                     checked_value = 'publish',
+                },
+                f:radio_button {
+                    title = 'Schedule',
+                    value = bind 'publishMode',
+                    checked_value = 'schedule',
                 },
                 f:checkbox {
                     title = 'Email subscribers',
@@ -200,6 +242,30 @@ function provider.sectionsForTopOfDialog(f, propertyTable)
                     title = 'Notify contacts',
                     value = bind 'notify',
                     enabled = bind 'publishing',
+                },
+            },
+            f:row {
+                spacing = f:control_spacing(),
+                f:static_text {
+                    title = 'When:',
+                    alignment = 'right',
+                    width = LrView.share 'label_width',
+                },
+                f:static_text {
+                    title = bind 'scheduleText',
+                    -- Lightroom sizes text once, when the dialog opens, and
+                    -- clips it if it grows. So this fits the widest date that
+                    -- can appear, "Wed, May 30, 2026 at 10:00 PM": 168 points
+                    -- in the 11-point font Lightroom's dialogs use.
+                    width = 172,
+                },
+                f:push_button {
+                    title = 'Choose…',
+                    -- Hidden rather than disabled: beside "Now" it means
+                    -- nothing, and would sit a whole date's width away.
+                    visible = bind 'scheduling',
+                    -- Runs a process, which needs a task; see testConnection.
+                    action = function() chooseTime(propertyTable) end,
                 },
             },
             f:static_text {
@@ -379,7 +445,7 @@ end
 
 --- Ask before doing something irreversible, naming the publication it will
 -- happen to. The check also fails early, before a single photo is uploaded.
-local function confirmPublish(context, settings, photos, fromCamera)
+local function confirmPublish(context, settings, photos, fromCamera, moment)
     -- Signing in is a round trip to Substack, and the export's own bar is
     -- finished by now, so this would otherwise be a few seconds of nothing
     -- before the dialog appears.
@@ -391,11 +457,14 @@ local function confirmPublish(context, settings, photos, fromCamera)
         return false, check.message
     end
 
-    local lines = {
-        'Photos: ' .. photos,
-        'Publication: ' .. (check.publication or 'unknown'),
-        'Email: ' .. (settings.sendEmail and 'yes, all subscribers' or 'no (web only)'),
-    }
+    local lines = {}
+    if moment then
+        table.insert(lines, 'Goes live: ' .. Schedule.describe(moment))
+    end
+    table.insert(lines, 'Photos: ' .. photos)
+    table.insert(lines, 'Publication: ' .. (check.publication or 'unknown'))
+    table.insert(lines, 'Email: '
+        .. (settings.sendEmail and 'yes, all subscribers' or 'no (web only)'))
     if settings.notify then
         table.insert(lines, 'Notify: yes, your contacts will be texted')
     end
@@ -403,17 +472,37 @@ local function confirmPublish(context, settings, photos, fromCamera)
         table.insert(lines, 'From the camera\'s JPEG, unedited: ' .. fromCamera)
     end
 
+    local body = table.concat(lines, '\n')
+    if not moment then
+        body = body .. '\n\nPublishing cannot be undone.'
+    end
+
     local choice = LrDialogs.confirm(
-        'Publish "' .. settings.title .. '" to Substack?',
-        table.concat(lines, '\n') .. '\n\nPublishing cannot be undone.',
-        'Publish',
+        moment and ('Schedule "' .. settings.title .. '" on Substack?')
+            or ('Publish "' .. settings.title .. '" to Substack?'),
+        body,
+        moment and 'Schedule' or 'Publish',
         'Cancel')
     return choice == 'ok', nil
 end
 
-local function showResult(result, settings, fromCamera)
+--- What the result dialog says about texts for a scheduled post.
+local function scheduledTextsNote(check)
+    if check == 'ok' then
+        return 'Contacts will be texted when it goes live.'
+    elseif check == 'pending' then
+        return 'Texts need Messages access. Allow Python in System Settings ▸ '
+            .. 'Privacy & Security ▸ Automation.'
+    end
+    return 'Texts cannot be sent: ' .. string.gsub(check, '^failed:%s*', '')
+end
+
+local function showResult(result, settings, fromCamera, moment)
     local published = result.status == 'published'
-    local body = published and 'Your post is live.' or 'Your draft is ready to edit.'
+    local scheduled = result.status == 'scheduled'
+    local body = published and 'Your post is live.'
+        or scheduled and ('Goes live ' .. Schedule.describe(moment) .. '.')
+        or 'Your draft is ready to edit.'
     if fromCamera > 0 then
         body = body .. '\n\n' .. fromCamera .. ' photo(s) came from the camera\'s '
             .. 'JPEG rather than Lightroom\'s render, so your develop edits are '
@@ -425,9 +514,14 @@ local function showResult(result, settings, fromCamera)
             body = body .. ', failed: ' .. result.notifiedFailed
         end
     end
+    if scheduled and settings.notify then
+        body = body .. '\n\n' .. scheduledTextsNote(result.messagesCheck)
+    end
 
     local choice = LrDialogs.confirm(
-        published and 'Published to Substack' or 'Draft created on Substack',
+        published and 'Published to Substack'
+            or scheduled and 'Scheduled on Substack'
+            or 'Draft created on Substack',
         body .. '\n\n' .. result.url,
         'Open in browser',
         'Done')
@@ -452,6 +546,18 @@ function provider.processRenderedPhotos(functionContext, exportContext)
             'Export again and enter a title, rather than saving one into a '
                 .. 'preset — a title belongs to a single post.', 'critical')
         return
+    end
+
+    -- Checked before rendering: a time that has passed since it was chosen
+    -- should stop the export before any work, not after it.
+    local moment = nil
+    if settings.publishMode == 'schedule' then
+        moment = settings.scheduleAt
+        if not Schedule.usable(moment, os.time()) then
+            LrDialogs.message('Cannot schedule this post',
+                'The scheduled time has passed.', 'critical')
+            return
+        end
     end
 
     local progress = exportContext:configureProgress {
@@ -518,9 +624,9 @@ function provider.processRenderedPhotos(functionContext, exportContext)
         return
     end
 
-    if settings.publishMode == 'publish' then
+    if settings.publishMode ~= 'draft' then
         local confirmed, problem = confirmPublish(functionContext, settings, #files,
-            fromCamera)
+            fromCamera, moment)
         if problem then
             cleanUp(folder, files)
             LrDialogs.message('Could not reach Substack', problem, 'critical')
@@ -533,10 +639,13 @@ function provider.processRenderedPhotos(functionContext, exportContext)
     end
 
     local result = withProgress(functionContext,
-        (settings.publishMode == 'publish' and 'Publishing ' or 'Drafting ')
+        (settings.publishMode == 'publish' and 'Publishing '
+            or settings.publishMode == 'schedule' and 'Scheduling '
+            or 'Drafting ')
             .. photoCount(#files) .. ' on Substack',
         function(progressPath, onPoll)
-            return SubstackCLI.post(settings, folder, progressPath, onPoll)
+            return SubstackCLI.post(settings, folder, progressPath, onPoll,
+                moment and Schedule.argument(moment))
         end)
     cleanUp(folder, files)
 
@@ -551,7 +660,7 @@ function provider.processRenderedPhotos(functionContext, exportContext)
                 .. 'post:\n\n' .. failures[1], 'warning')
     end
 
-    showResult(result, settings, fromCamera)
+    showResult(result, settings, fromCamera, moment)
 end
 
 return provider
